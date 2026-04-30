@@ -7,79 +7,105 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential git zip unzip openjdk-17-jdk autoconf libtool pkg-config zlib1g-dev libncurses5-dev cmake libffi-dev libssl-dev
-          pip install --upgrade pip
-          pip install buildozer cython==0.29.36
-
-      - name: Download and patch sources
-        run: |
-          rm -rf .buildozer ~/.buildozer
-          # 第一次构建：下载源码（允许失败）
-          buildozer android debug || true
-          
-          # === 修补源码 ===
-          BUILD_DIR=".buildozer/android/platform/build-arm64-v8a/build/bootstrap_builds/sdl2"
-          
-          if [ -d "$BUILD_DIR" ]; then
-            echo "=== 修补 SDL2: ALooper_pollAll → ALooper_pollOnce ==="
-            find "$BUILD_DIR/jni/SDL" -name "*.c" -o -name "*.h" | xargs grep -l "ALooper_pollAll" 2>/dev/null | while read f; do
-              sed -i 's/ALooper_pollAll/ALooper_pollOnce/g' "$f"
-              echo "  已修补: $(basename $f)"
-            done
-            
-            echo "=== 修补 harfbuzz: 关闭 cast-function-type-strict 错误 ==="
-            find "$BUILD_DIR" -name "*.mk" | while read f; do
-              if ! grep -q "cast-function-type-strict" "$f"; then
-                sed -i '/LOCAL_CFLAGS/a LOCAL_CFLAGS += -Wno-error=cast-function-type-strict -Wno-cast-function-type-strict' "$f" 2>/dev/null
-              fi
-            done
-            
-            # 直接修改 Application.mk 添加全局编译标志
-            APP_MK="$BUILD_DIR/jni/Application.mk"
-            if [ -f "$APP_MK" ]; then
-              echo "" >> "$APP_MK"
-              echo "# 16KB alignment and compatibility fixes" >> "$APP_MK"
-              echo "APP_CFLAGS += -Wno-error=cast-function-type-strict" >> "$APP_MK"
-              echo "APP_LDFLAGS += -Wl,-z,max-page-size=16384" >> "$APP_MK"
-              echo "已修补 Application.mk"
-              cat "$APP_MK"
-            fi
-            
-            # 修补 harfbuzz 的 hb-ft.cc 直接修改源码
-            find "$BUILD_DIR" -name "hb-ft.cc" | while read f; do
-              # 把 FT_Generic_Finalizer 的强转改为 reinterpret_cast 或去掉 -Werror
-              sed -i 's/-Werror/-Wno-error/g' "$f" 2>/dev/null
-              echo "已修补: $f"
-            done
-            
-            # 清理编译缓存，强制重新编译
-            echo "=== 清理编译缓存 ==="
-            rm -rf "$BUILD_DIR/obj" "$BUILD_DIR/libs"
-          fi
-        timeout-minutes: 30
-
       - name: Build APK
-        run: |
-          buildozer android debug
-        timeout-minutes: 90
-        env:
-          JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+        uses: ArtemSBulgakov/buildozer-action@v1
+        id: buildozer
+        with:
+          workdir: .
+          buildozer_version: master
 
-      - name: Upload APK
+      - name: Fix 16KB ELF alignment
+        if: success()
+        run: |
+          pip install pyelftools
+          python3 << 'PYEOF'
+          import os, zipfile, shutil
+          from elftools.elf.elffile import ELFFile
+
+          def fix_elf_alignment(so_path):
+              with open(so_path, 'rb') as f:
+                  elf = ELFFile(f)
+                  needs_fix = any(
+                      seg['p_type'] == 'PT_LOAD' and seg['p_align'] < 16384
+                      for seg in elf.iter_segments()
+                  )
+              if not needs_fix:
+                  return False
+
+              with open(so_path, 'rb') as f:
+                  data = bytearray(f.read())
+
+              e_phoff = int.from_bytes(data[32:40], 'little')
+              e_phentsize = int.from_bytes(data[54:56], 'little')
+              e_phnum = int.from_bytes(data[56:58], 'little')
+
+              fixed = False
+              for i in range(e_phnum):
+                  offset = e_phoff + i * e_phentsize
+                  p_type = int.from_bytes(data[offset:offset+4], 'little')
+                  if p_type == 1:  # PT_LOAD
+                      p_align_off = offset + 48
+                      p_align = int.from_bytes(data[p_align_off:p_align_off+8], 'little')
+                      if p_align < 16384:
+                          data[p_align_off:p_align_off+8] = (16384).to_bytes(8, 'little')
+                          fixed = True
+
+              if fixed:
+                  with open(so_path, 'wb') as f:
+                      f.write(data)
+              return fixed
+
+          apk_path = None
+          for f in os.listdir("bin"):
+              if f.endswith(".apk"):
+                  apk_path = os.path.join("bin", f)
+                  break
+          if not apk_path:
+              print("No APK found!")
+              exit(1)
+
+          print(f"Found APK: {apk_path}")
+          work_dir = "apk_fix"
+          shutil.rmtree(work_dir, ignore_errors=True)
+          os.makedirs(work_dir)
+          with zipfile.ZipFile(apk_path, 'r') as z:
+              z.extractall(work_dir)
+
+          lib_dir = os.path.join(work_dir, "lib", "arm64-v8a")
+          if os.path.exists(lib_dir):
+              for so_file in os.listdir(lib_dir):
+                  if so_file.endswith(".so"):
+                      so_path = os.path.join(lib_dir, so_file)
+                      if fix_elf_alignment(so_path):
+                          print(f"✅ Fixed: {so_file}")
+                      else:
+                          print(f"⏭️ Already aligned: {so_file}")
+
+          fixed_apk = apk_path.replace(".apk", "-16k.apk")
+          with zipfile.ZipFile(fixed_apk, 'w', zipfile.ZIP_DEFLATED) as z:
+              for root, dirs, files in os.walk(work_dir):
+                  for f in files:
+                      filepath = os.path.join(root, f)
+                      arcname = os.path.relpath(filepath, work_dir)
+                      z.write(filepath, arcname)
+          print(f"✅ Fixed APK: {fixed_apk}")
+          PYEOF
+
+      - name: Upload fixed APK
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: fileshare-apk
+          name: fileshare-apk-16k
+          path: bin/*-16k.apk
+
+      - name: Upload original APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fileshare-apk-original
           path: bin/*.apk
+          if-no-files-found: warn
