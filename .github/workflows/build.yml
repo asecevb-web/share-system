@@ -39,14 +39,18 @@ jobs:
           from elftools.elf.elffile import ELFFile
 
           def fix_elf_alignment(so_path):
-              with open(so_path, 'rb') as f:
-                  elf = ELFFile(f)
-                  needs_fix = any(
-                      seg['p_type'] == 'PT_LOAD' and seg['p_align'] < 16384
-                      for seg in elf.iter_segments()
-                  )
-              if not needs_fix:
-                  return False
+              try:
+                  with open(so_path, 'rb') as f:
+                      elf = ELFFile(f)
+                      needs_fix = any(
+                          seg['p_type'] == 'PT_LOAD' and seg['p_align'] < 16384
+                          for seg in elf.iter_segments()
+                      )
+                  if not needs_fix:
+                      return False
+              except Exception as e:
+                  print(f"⚠️ Skip (not ELF): {os.path.basename(so_path)}: {e}")
+                  return None
               with open(so_path, 'rb') as f:
                   data = bytearray(f.read())
               e_phoff = int.from_bytes(data[32:40], 'little')
@@ -86,9 +90,10 @@ jobs:
               for so_file in os.listdir(lib_dir):
                   if so_file.endswith(".so"):
                       so_path = os.path.join(lib_dir, so_file)
-                      if fix_elf_alignment(so_path):
+                      result = fix_elf_alignment(so_path)
+                      if result is True:
                           print(f"✅ Fixed: {so_file}")
-                      else:
+                      elif result is False:
                           print(f"⏭️ Already aligned: {so_file}")
           fixed_apk = apk_path.replace(".apk", "-16k.apk")
           with zipfile.ZipFile(fixed_apk, 'w', zipfile.ZIP_DEFLATED) as z:
