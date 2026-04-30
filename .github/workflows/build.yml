@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 
@@ -20,25 +20,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential \
-            git \
-            zip \
-            unzip \
-            openjdk-17-jdk \
-            autoconf \
-            libtool \
-            pkg-config \
-            zlib1g-dev \
-            libncurses5-dev \
-            cmake \
-            libffi-dev \
-            libssl-dev \
-            lld
+            build-essential git zip unzip \
+            openjdk-17-jdk autoconf libtool pkg-config \
+            zlib1g-dev libncurses5-dev cmake libffi-dev libssl-dev
 
       - name: Install Python packages
         run: |
           pip install --upgrade pip
-          pip install buildozer cython==0.29.37 kivy
+          pip install buildozer cython kivy
 
       - name: Cache Buildozer
         uses: actions/cache@v4
@@ -46,17 +35,25 @@ jobs:
           path: |
             ~/.buildozer
             .buildozer
-          key: buildozer-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
+          key: buildozer-android-${{ hashFiles('buildozer.spec') }}
           restore-keys: |
-            buildozer-${{ runner.os }}-
+            buildozer-android-
 
       - name: Build APK
         run: |
-          buildozer android debug
-        timeout-minutes: 60
+          buildozer android debug 2>&1 | tee build.log
+        timeout-minutes: 90
 
       - name: Upload APK
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: fileshare-apk
           path: bin/*.apk
+
+      - name: Upload build log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
