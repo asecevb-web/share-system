@@ -27,17 +27,11 @@ jobs:
       - name: Install Python packages
         run: |
           pip install --upgrade pip
-          pip install buildozer cython kivy
+          pip install buildozer cython==0.29.36
 
-      - name: Cache Buildozer
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.buildozer
-            .buildozer
-          key: buildozer-android-${{ hashFiles('buildozer.spec') }}
-          restore-keys: |
-            buildozer-android-
+      - name: Clear Buildozer cache
+        run: |
+          rm -rf ~/.buildozer .buildozer
 
       - name: Build APK
         run: |
@@ -45,15 +39,12 @@ jobs:
         timeout-minutes: 90
 
       - name: Find APK files
+        if: always()
         run: |
-          echo "=== 当前目录 ==="
-          pwd
           echo "=== bin 目录 ==="
           ls -la bin/ 2>/dev/null || echo "bin 目录不存在"
-          echo "=== 查找所有 APK ==="
-          find $GITHUB_WORKSPACE -name "*.apk" -type f 2>/dev/null
-          echo "=== 查找所有 .aab ==="
-          find $GITHUB_WORKSPACE -name "*.aab" -type f 2>/dev/null
+          echo "=== 查找 APK ==="
+          find $GITHUB_WORKSPACE -name "*.apk" -type f 2>/dev/null || echo "没有找到 APK"
 
       - name: Upload APK
         if: success()
@@ -61,4 +52,12 @@ jobs:
         with:
           name: fileshare-apk
           path: bin/
+          if-no-files-found: warn
+
+      - name: Upload build log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: .buildozer/android/platform/build-arm64-v8a/build/installed-packages.txt
           if-no-files-found: warn
