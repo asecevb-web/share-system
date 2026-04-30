@@ -26,12 +26,34 @@ jobs:
       - name: Build APK
         run: |
           rm -rf .buildozer ~/.buildozer
+          # 第一次构建会下载源码，可能会失败
+          buildozer android debug || true
+          
+          # 修补下载的源码
+          BUILD_DIR=".buildozer/android/platform/build-arm64-v8a/build/bootstrap_builds/sdl2"
+          if [ -d "$BUILD_DIR" ]; then
+            echo "=== 修补 harfbuzz cast-function-type-strict ==="
+            find "$BUILD_DIR" -name "hb-ft.cc" -exec sed -i 's/-Werror/-Wno-error/g' {} \; 2>/dev/null || true
+            
+            # 修改 jni/Application.mk 添加 APP_CFLAGS
+            if [ -f "$BUILD_DIR/jni/Application.mk" ]; then
+              echo "APP_CFLAGS += -Wno-error=cast-function-type-strict" >> "$BUILD_DIR/jni/Application.mk"
+              echo "APP_LDFLAGS += -Wl,-z,max-page-size=16384" >> "$BUILD_DIR/jni/Application.mk"
+              echo "已修补 Application.mk"
+            fi
+            
+            # 修补 SDL2 的 ALooper_pollAll
+            find "$BUILD_DIR" -name "*.c" -exec grep -l "ALooper_pollAll" {} \; 2>/dev/null | while read f; do
+              sed -i 's/ALooper_pollAll/ALooper_pollOnce/g' "$f"
+              echo "已修补: $f"
+            done
+          fi
+          
+          # 重新构建
           buildozer android debug
-        timeout-minutes: 90
+        timeout-minutes: 120
         env:
           JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
-          APP_CFLAGS: "-Wno-error=cast-function-type-strict"
-          APP_LDFLAGS: "-Wl,-z,max-page-size=16384"
 
       - name: Upload APK
         if: success()
