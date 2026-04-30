@@ -8,6 +8,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-22.04
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
     steps:
       - uses: actions/checkout@v4
 
@@ -30,19 +33,15 @@ jobs:
           pip install buildozer cython==0.29.36
 
       - name: Clear Buildozer cache
-        run: |
-          rm -rf ~/.buildozer .buildozer
+        run: rm -rf ~/.buildozer .buildozer
 
       - name: Build APK
-        run: |
-          buildozer android debug
+        run: buildozer android debug
         timeout-minutes: 90
 
       - name: Find APK files
         if: always()
         run: |
-          echo "=== bin 目录 ==="
-          ls -la bin/ 2>/dev/null || echo "bin 目录不存在"
           echo "=== 查找 APK ==="
           find $GITHUB_WORKSPACE -name "*.apk" -type f 2>/dev/null || echo "没有找到 APK"
 
@@ -52,12 +51,4 @@ jobs:
         with:
           name: fileshare-apk
           path: bin/
-          if-no-files-found: warn
-
-      - name: Upload build log
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-log
-          path: .buildozer/android/platform/build-arm64-v8a/build/installed-packages.txt
           if-no-files-found: warn
