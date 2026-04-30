@@ -1,0 +1,33 @@
+# Build artifacts
+.buildozer/
+bin/
+*.apk
+*.aab
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environment
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Downloads (client-side)
+downloads/
+
+# Shared files (server-side)
+shared_files/
