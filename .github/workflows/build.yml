@@ -7,21 +7,33 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build APK
-        uses: ArtemSBulgakov/buildozer-action@v1
-        id: buildozer
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
         with:
-          workdir: .
-          buildozer_version: master
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential git zip unzip openjdk-17-jdk autoconf libtool pkg-config zlib1g-dev libncurses5-dev cmake libffi-dev libssl-dev
+          pip install --upgrade pip
+          pip install buildozer cython==0.29.36 pyelftools
+
+      - name: Build APK
+        run: |
+          rm -rf .buildozer ~/.buildozer
+          buildozer android debug
+        timeout-minutes: 90
+        env:
+          JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
 
       - name: Fix 16KB ELF alignment
         if: success()
         run: |
-          pip install pyelftools
           python3 << 'PYEOF'
           import os, zipfile, shutil
           from elftools.elf.elffile import ELFFile
@@ -35,25 +47,21 @@ jobs:
                   )
               if not needs_fix:
                   return False
-
               with open(so_path, 'rb') as f:
                   data = bytearray(f.read())
-
               e_phoff = int.from_bytes(data[32:40], 'little')
               e_phentsize = int.from_bytes(data[54:56], 'little')
               e_phnum = int.from_bytes(data[56:58], 'little')
-
               fixed = False
               for i in range(e_phnum):
                   offset = e_phoff + i * e_phentsize
                   p_type = int.from_bytes(data[offset:offset+4], 'little')
-                  if p_type == 1:  # PT_LOAD
+                  if p_type == 1:
                       p_align_off = offset + 48
                       p_align = int.from_bytes(data[p_align_off:p_align_off+8], 'little')
                       if p_align < 16384:
                           data[p_align_off:p_align_off+8] = (16384).to_bytes(8, 'little')
                           fixed = True
-
               if fixed:
                   with open(so_path, 'wb') as f:
                       f.write(data)
@@ -67,14 +75,12 @@ jobs:
           if not apk_path:
               print("No APK found!")
               exit(1)
-
           print(f"Found APK: {apk_path}")
           work_dir = "apk_fix"
           shutil.rmtree(work_dir, ignore_errors=True)
           os.makedirs(work_dir)
           with zipfile.ZipFile(apk_path, 'r') as z:
               z.extractall(work_dir)
-
           lib_dir = os.path.join(work_dir, "lib", "arm64-v8a")
           if os.path.exists(lib_dir):
               for so_file in os.listdir(lib_dir):
@@ -84,7 +90,6 @@ jobs:
                           print(f"✅ Fixed: {so_file}")
                       else:
                           print(f"⏭️ Already aligned: {so_file}")
-
           fixed_apk = apk_path.replace(".apk", "-16k.apk")
           with zipfile.ZipFile(fixed_apk, 'w', zipfile.ZIP_DEFLATED) as z:
               for root, dirs, files in os.walk(work_dir):
