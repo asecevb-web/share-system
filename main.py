@@ -12,7 +12,6 @@ from typing import List, Dict, Optional
 import requests
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
-from kivy.uix.listview import ListItemButton
 from kivy.properties import ListProperty, ObjectProperty
 from kivy.clock import Clock
 from kivy.utils import platform
