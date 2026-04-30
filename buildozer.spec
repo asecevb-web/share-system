@@ -1,15 +1,15 @@
 [app]
-title = FileShare
+title = 文件共享
 package.name = fileshare
 package.domain = org.fileshare
 source.dir = .
 source.include_exts = py
-version = 0.1
+version = 0.2
 requirements = python3,kivy,requests
 orientation = portrait
 fullscreen = 0
 android.permissions = INTERNET,ACCESS_NETWORK_STATE
-android.api = 33
+android.api = 28
 android.minapi = 21
 android.accept_sdk_license = True
 android.archs = arm64-v8a
