@@ -19,7 +19,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential git zip unzip openjdk-17-jdk autoconf libtool pkg-config zlib1g-dev libncurses5-dev cmake libffi-dev libssl-dev
+          sudo apt-get install -y build-essential git zip unzip openjdk-17-jdk autoconf libtool pkg-config zlib1g-dev libncurses5-dev cmake libffi-dev libssl-dev patchelf
           pip install --upgrade pip
           pip install buildozer cython==0.29.36
 
@@ -30,11 +30,76 @@ jobs:
         timeout-minutes: 90
         env:
           JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
-          LDFLAGS: "-Wl,-z,max-page-size=16384"
+          APP_LDFLAGS: "-Wl,-z,max-page-size=16384"
+
+      - name: Fix 16KB alignment
+        if: success()
+        run: |
+          pip install pyelftools
+          python3 << 'PYEOF'
+          import os, struct, zipfile, shutil, subprocess
+
+          # Find APK
+          apk_path = None
+          for f in os.listdir("bin"):
+              if f.endswith(".apk"):
+                  apk_path = os.path.join("bin", f)
+                  break
+          if not apk_path:
+              print("No APK found!")
+              exit(1)
+
+          print(f"Found APK: {apk_path}")
+
+          # Extract APK
+          work_dir = "apk_fix"
+          shutil.rmtree(work_dir, ignore_errors=True)
+          os.makedirs(work_dir)
+          with zipfile.ZipFile(apk_path, 'r') as z:
+              z.extractall(work_dir)
+
+          # Find .so files and fix alignment
+          lib_dir = os.path.join(work_dir, "lib", "arm64-v8a")
+          if os.path.exists(lib_dir):
+              for so_file in os.listdir(lib_dir):
+                  if so_file.endswith(".so"):
+                      so_path = os.path.join(lib_dir, so_file)
+                      # Use objcopy to fix alignment
+                      fixed_path = so_path + ".fixed"
+                      result = subprocess.run(
+                          ["objcopy", "--set-section-alignment", ".load=16384", so_path, fixed_path],
+                          capture_output=True, text=True
+                      )
+                      if result.returncode == 0:
+                          os.replace(fixed_path, so_path)
+                          print(f"Fixed: {so_file}")
+                      else:
+                          print(f"Could not fix {so_file}: {result.stderr}")
+
+          # Repack APK
+          fixed_apk = apk_path.replace(".apk", "-16k.apk")
+          with zipfile.ZipFile(fixed_apk, 'w', zipfile.ZIP_DEFLATED) as z:
+              for root, dirs, files in os.walk(work_dir):
+                  for f in files:
+                      filepath = os.path.join(root, f)
+                      arcname = os.path.relpath(filepath, work_dir)
+                      z.write(filepath, arcname)
+
+          print(f"Fixed APK: {fixed_apk}")
+          PYEOF
 
       - name: Upload APK
         if: success()
         uses: actions/upload-artifact@v4
         with:
           name: fileshare-apk
+          path: bin/*-16k.apk
+          if-no-files-found: warn
+
+      - name: Upload original APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fileshare-apk-original
           path: bin/*.apk
+          if-no-files-found: warn
