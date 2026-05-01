@@ -244,16 +244,32 @@ class FileShareApp(App):
         return "Android Device"
 
     def _get_local_ip(self) -> str:
+        """获取局域网IP（优先WiFi，排除VPN）"""
+        if platform == 'android':
+            try:
+                from jnius import autoclass
+                WifiManager = autoclass('android.net.wifi.WifiManager')
+                context = autoclass('org.kivy.android.PythonActivity').mActivity
+                wm = context.getSystemService(context.WIFI_SERVICE)
+                if wm and wm.isWifiEnabled():
+                    info = wm.getConnectionInfo()
+                    ip = info.getIpAddress()
+                    if ip != 0:
+                        return f'{ip & 0xff}.{(ip >> 8) & 0xff}.{(ip >> 16) & 0xff}.{(ip >> 24) & 0xff}'
+            except Exception as e:
+                Logger.warning(f'FileShare: WiFi IP获取失败: {e}')
+
+        # 后备: 通过socket获取（可能选到VPN）
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.settimeout(2)
-            s.connect(("8.8.8.8", 80))
+            s.connect(('8.8.8.8', 80))
             ip = s.getsockname()[0]
             s.close()
             return ip
         except Exception as e:
-            Logger.warning(f"FileShare: 获取IP失败: {e}")
-            return "0.0.0.0"
+            Logger.warning(f'FileShare: 获取IP失败: {e}')
+            return '0.0.0.0'
 
     def _start_udp_service(self):
         """启动UDP广播服务"""
@@ -303,28 +319,38 @@ class FileShareApp(App):
         self.udp_thread = threading.Thread(target=udp_service, daemon=True)
         self.udp_thread.start()
 
+    def _get_broadcast_addr(self) -> str:
+        """获取局域网广播地址"""
+        if self.local_ip and self.local_ip != '0.0.0.0':
+            # 从IP推算广播地址（假设/24）
+            parts = self.local_ip.split('.')
+            if len(parts) == 4:
+                return f'{parts[0]}.{parts[1]}.{parts[2]}.255'
+        return '<broadcast>'
+
     def _broadcast_device(self):
         """广播设备信息"""
         try:
             import json
             message = {
-                "version": "1.0",
-                "type": "announce",
-                "data": {
-                    "device_id": self.device_id,
-                    "name": self.device_name,
-                    "ip": self.local_ip,
-                    "port": HTTP_PORT,
-                    "platform": "Android"
+                'version': '1.0',
+                'type': 'announce',
+                'data': {
+                    'device_id': self.device_id,
+                    'name': self.device_name,
+                    'ip': self.local_ip,
+                    'port': HTTP_PORT,
+                    'platform': 'Android'
                 },
-                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S")
+                'timestamp': time.strftime('%Y-%m-%dT%H:%M:%S')
             }
+            bcast_addr = self._get_broadcast_addr()
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-            sock.sendto(json.dumps(message).encode('utf-8'), ('<broadcast>', UDP_BROADCAST_PORT))
+            sock.sendto(json.dumps(message).encode('utf-8'), (bcast_addr, UDP_BROADCAST_PORT))
             sock.close()
         except Exception as e:
-            Logger.warning(f"FileShare: 广播失败: {e}")
+            Logger.warning(f'FileShare: 广播失败: {e}')
 
     def _handle_udp_message(self, data):
         """处理UDP消息"""
