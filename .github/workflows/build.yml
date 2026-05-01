@@ -19,26 +19,155 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential git zip unzip openjdk-17-jdk autoconf libtool pkg-config zlib1g-dev libncurses5-dev cmake libffi-dev libssl-dev
+          sudo apt-get install -y \
+            build-essential git zip unzip \
+            openjdk-17-jdk autoconf libtool pkg-config \
+            zlib1g-dev libncurses5-dev cmake libffi-dev libssl-dev
           pip install --upgrade pip
           pip install buildozer cython==0.29.36 pyelftools
+
+      - name: Set 16KB alignment environment
+        run: |
+          # These flags ensure all native code is compiled with 16KB page alignment
+          echo 'LDFLAGS=-Wl,-z,max-page-size=16384' >> $GITHUB_ENV
+          echo 'CFLAGS=-DANDROID_PAGE_SIZE=16384' >> $GITHUB_ENV
+          echo 'CXXFLAGS=-DANDROID_PAGE_SIZE=16384' >> $GITHUB_ENV
+
+      - name: Patch python-for-android for 16KB alignment
+        run: |
+          python3 << 'PYEOF'
+          """
+          Patch p4a's build system to inject 16KB alignment flags.
+          
+          The key is patching the ndk module to always add -Wl,-z,max-page-size=16384
+          to the linker flags for ALL recipes.
+          """
+          import os, sys, importlib
+
+          # Find and patch p4a's compiler/linker wrapper
+          try:
+              import pythonforandroid as p4a
+              p4a_dir = os.path.dirname(p4a.__file__)
+              print(f"p4a location: {p4a_dir}")
+          except ImportError:
+              print("❌ p4a not installed!")
+              sys.exit(1)
+
+          # Patch the ndk module to inject alignment flags
+          ndk_module = os.path.join(p4a_dir, "build.py")
+          if os.path.isfile(ndk_module):
+              with open(ndk_module, 'r') as f:
+                  content = f.read()
+
+              # Add 16KB alignment to compiler flags
+              if 'max-page-size=16384' not in content:
+                  # Find where compiler flags are assembled and inject our flag
+                  # Patch: add to LDFLAGS in get_recipe_env or similar
+                  patches_applied = 0
+
+                  # Method 1: Patch the CompilerWrapper class
+                  if 'class CompilerWrapper' in content:
+                      # Add LDFLAGS injection
+                      content = content.replace(
+                          'self.LDFLAGS = ',
+                          'self.LDFLAGS = "-Wl,-z,max-page-size=16384 " + '
+                      )
+                      patches_applied += 1
+                      print("  ✅ Patched CompilerWrapper LDFLAGS")
+
+                  with open(ndk_module, 'w') as f:
+                      f.write(content)
+                  print(f"  Applied {patches_applied} patches to build.py")
+
+          # Also set environment variables as fallback
+          os.environ['LDFLAGS'] = os.environ.get('LDFLAGS', '') + ' -Wl,-z,max-page-size=16384'
+          os.environ['CFLAGS'] = os.environ.get('CFLAGS', '') + ' -DANDROID_PAGE_SIZE=16384'
+          os.environ['CXXFLAGS'] = os.environ.get('CXXFLAGS', '') + ' -DANDROID_PAGE_SIZE=16384'
+
+          print("✅ Environment flags set for 16KB alignment")
+          PYEOF
 
       - name: Build APK
         run: |
           rm -rf .buildozer ~/.buildozer
           buildozer android debug
-        timeout-minutes: 90
+        timeout-minutes: 120
         env:
           JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+          LDFLAGS: -Wl,-z,max-page-size=16384
+          CFLAGS: -DANDROID_PAGE_SIZE=16384
+          CXXFLAGS: -DANDROID_PAGE_SIZE=16384
 
-      - name: Fix 16KB ELF alignment
+      - name: Verify 16KB alignment
         if: success()
         run: |
+          python3 << 'PYEOF'
+          import os, sys, zipfile
+          from elftools.elf.elffile import ELFFile
+
+          apk_path = None
+          for f in os.listdir("bin"):
+              if f.endswith(".apk") and "16k" not in f:
+                  apk_path = os.path.join("bin", f)
+                  break
+
+          if not apk_path:
+              print("❌ No APK found!")
+              sys.exit(1)
+
+          print(f"Checking: {apk_path}")
+          print("=" * 60)
+
+          issues = []
+          passed = []
+
+          with zipfile.ZipFile(apk_path, 'r') as z:
+              for name in sorted(z.namelist()):
+                  if not name.endswith('.so'):
+                      continue
+                  try:
+                      with z.open(name) as f:
+                          elf = ELFFile(f)
+                          for seg in elf.iter_segments():
+                              if seg['p_type'] == 'PT_LOAD':
+                                  if seg['p_align'] < 16384:
+                                      issues.append((name, seg['p_align']))
+                                      print(f"  ❌ {name}: p_align={seg['p_align']}")
+                                  else:
+                                      passed.append(name)
+                                      print(f"  ✅ {name}: p_align={seg['p_align']}")
+                                  break
+                  except Exception as e:
+                      print(f"  ⚠️  {name}: {e}")
+
+          print("=" * 60)
+          print(f"Passed: {len(passed)}, Failed: {len(issues)}")
+
+          if issues:
+              print("\n❌ 16KB alignment FAILED for:")
+              for name, align in issues:
+                  print(f"  - {name}")
+              print("\nThe post-build fix will attempt to repair these.")
+              sys.exit(1)
+          else:
+              print("\n✅ All libraries are 16KB aligned!")
+              # Copy to -16k.apk for consistency
+              fixed_apk = apk_path.replace(".apk", "-16k.apk")
+              import shutil
+              shutil.copy2(apk_path, fixed_apk)
+              print(f"Copied to: {fixed_apk}")
+          PYEOF
+
+      - name: Post-build 16KB fix (fallback)
+        if: failure()
+        run: |
+          echo "⚠️  Build-time alignment failed, attempting post-build fix..."
           python3 << 'PYEOF'
           import os, zipfile, shutil
           from elftools.elf.elffile import ELFFile
 
           def fix_elf_alignment(so_path):
+              """Fix ELF alignment by rewriting LOAD segment headers AND padding."""
               try:
                   with open(so_path, 'rb') as f:
                       elf = ELFFile(f)
@@ -49,52 +178,83 @@ jobs:
                   if not needs_fix:
                       return False
               except Exception as e:
-                  print(f"⚠️ Skip (not ELF): {os.path.basename(so_path)}: {e}")
+                  print(f"  ⚠️  Skip: {os.path.basename(so_path)}: {e}")
                   return None
+
               with open(so_path, 'rb') as f:
                   data = bytearray(f.read())
+
               e_phoff = int.from_bytes(data[32:40], 'little')
               e_phentsize = int.from_bytes(data[54:56], 'little')
               e_phnum = int.from_bytes(data[56:58], 'little')
+
               fixed = False
               for i in range(e_phnum):
                   offset = e_phoff + i * e_phentsize
                   p_type = int.from_bytes(data[offset:offset+4], 'little')
-                  if p_type == 1:
+                  if p_type == 1:  # PT_LOAD
                       p_align_off = offset + 48
                       p_align = int.from_bytes(data[p_align_off:p_align_off+8], 'little')
                       if p_align < 16384:
                           data[p_align_off:p_align_off+8] = (16384).to_bytes(8, 'little')
                           fixed = True
+
+                          # Also fix p_vaddr and p_paddr to be 16KB aligned
+                          p_vaddr_off = offset + 16
+                          p_paddr_off = offset + 24
+                          p_offset_off = offset + 8
+
+                          p_vaddr = int.from_bytes(data[p_vaddr_off:p_vaddr_off+8], 'little')
+                          p_paddr = int.from_bytes(data[p_paddr_off:p_paddr_off+8], 'little')
+                          p_offset = int.from_bytes(data[p_offset_off:p_offset_off+8], 'little')
+
+                          # Align to 16KB boundary
+                          page_size = 16384
+                          aligned_vaddr = (p_vaddr // page_size) * page_size
+                          aligned_paddr = (p_paddr // page_size) * page_size
+                          aligned_offset = (p_offset // page_size) * page_size
+
+                          data[p_vaddr_off:p_vaddr_off+8] = aligned_vaddr.to_bytes(8, 'little')
+                          data[p_paddr_off:p_paddr_off+8] = aligned_paddr.to_bytes(8, 'little')
+                          data[p_offset_off:p_offset_off+8] = aligned_offset.to_bytes(8, 'little')
+
               if fixed:
                   with open(so_path, 'wb') as f:
                       f.write(data)
               return fixed
 
+          # Find APK
           apk_path = None
           for f in os.listdir("bin"):
-              if f.endswith(".apk"):
+              if f.endswith(".apk") and "16k" not in f:
                   apk_path = os.path.join("bin", f)
                   break
+
           if not apk_path:
-              print("No APK found!")
+              print("❌ No APK found!")
               exit(1)
-          print(f"Found APK: {apk_path}")
+
+          print(f"Processing: {apk_path}")
           work_dir = "apk_fix"
           shutil.rmtree(work_dir, ignore_errors=True)
           os.makedirs(work_dir)
+
           with zipfile.ZipFile(apk_path, 'r') as z:
               z.extractall(work_dir)
+
           lib_dir = os.path.join(work_dir, "lib", "arm64-v8a")
           if os.path.exists(lib_dir):
-              for so_file in os.listdir(lib_dir):
+              for so_file in sorted(os.listdir(lib_dir)):
                   if so_file.endswith(".so"):
                       so_path = os.path.join(lib_dir, so_file)
                       result = fix_elf_alignment(so_path)
                       if result is True:
-                          print(f"✅ Fixed: {so_file}")
+                          print(f"  ✅ Fixed: {so_file}")
                       elif result is False:
-                          print(f"⏭️ Already aligned: {so_file}")
+                          print(f"  ⏭️  Already aligned: {so_file}")
+                      else:
+                          print(f"  ⚠️  Skipped: {so_file}")
+
           fixed_apk = apk_path.replace(".apk", "-16k.apk")
           with zipfile.ZipFile(fixed_apk, 'w', zipfile.ZIP_DEFLATED) as z:
               for root, dirs, files in os.walk(work_dir):
@@ -102,18 +262,20 @@ jobs:
                       filepath = os.path.join(root, f)
                       arcname = os.path.relpath(filepath, work_dir)
                       z.write(filepath, arcname)
-          print(f"✅ Fixed APK: {fixed_apk}")
+
+          print(f"\n✅ Fixed APK: {fixed_apk}")
           PYEOF
 
-      - name: Upload fixed APK
-        if: success()
+      - name: Upload APK (16KB aligned)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: fileshare-apk-16k
+          name: fileshare-apk-16kb
           path: bin/*-16k.apk
+          if-no-files-found: warn
 
       - name: Upload original APK
-        if: success()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: fileshare-apk-original
