@@ -38,6 +38,11 @@ HTTP_PORT = 8080
 
 # ========== 字体 ==========
 def get_font_path():
+    # 1. 优先用打包的字体
+    bundled = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'NotoSansSC-Regular.otf')
+    if os.path.exists(bundled):
+        return bundled
+    # 2. Android 系统字体
     if platform == 'android':
         for fp in [
             '/system/fonts/NotoSansCJK-Regular.ttc',

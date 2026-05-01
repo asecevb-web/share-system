@@ -26,6 +26,12 @@ jobs:
           pip install --upgrade pip
           pip install buildozer cython==0.29.36 pyelftools
 
+      - name: Download Chinese font
+        run: |
+          mkdir -p fonts
+          curl -sL --max-time 60 "https://github.com/googlefonts/noto-cjk/raw/main/Sans/OTF/SimplifiedChinese/NotoSansSC-Regular.otf" -o fonts/NotoSansSC-Regular.otf
+          ls -lh fonts/
+
       - name: Build APK
         run: |
           rm -rf .buildozer ~/.buildozer
