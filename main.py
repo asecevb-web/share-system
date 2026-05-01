@@ -334,10 +334,14 @@ class FileShareApp(App):
         btn_box = BoxLayout(size_hint_y=0.4, spacing=10)
 
         def on_ok(btn):
-            addr = ip_input.text.strip()
-            popup.dismiss()
-            if addr:
-                self._do_manual_connect(addr)
+            try:
+                addr = ip_input.text.strip()
+                popup.dismiss()
+                if addr:
+                    self._do_manual_connect(addr)
+            except Exception as e:
+                Logger.error(f'FileShare: 确认连接失败: {e}')
+                popup.dismiss()
 
         def on_cancel(btn):
             popup.dismiss()
@@ -356,25 +360,29 @@ class FileShareApp(App):
 
     def _do_manual_connect(self, addr):
         """执行手动连接"""
-        if ':' in addr:
-            ip, port = addr.rsplit(':', 1)
-            try:
-                port = int(port)
-            except ValueError:
+        try:
+            if ':' in addr:
+                ip, port = addr.rsplit(':', 1)
+                try:
+                    port = int(port)
+                except ValueError:
+                    port = HTTP_PORT
+            else:
+                ip = addr
                 port = HTTP_PORT
-        else:
-            ip = addr
-            port = HTTP_PORT
 
-        self.ip_display.text = f'{ip}:{port}'
-        device = {
-            'device_id': f'manual-{ip}',
-            'name': f'{ip}',
-            'ip': ip,
-            'port': port,
-            'platform': 'Unknown'
-        }
-        self._connect_to_device(device)
+            self.ip_display.text = f'{ip}:{port}'
+            device = {
+                'device_id': f'manual-{ip}',
+                'name': f'{ip}',
+                'ip': ip,
+                'port': port,
+                'platform': 'Unknown'
+            }
+            self._connect_to_device(device)
+        except Exception as e:
+            Logger.error(f'FileShare: 手动连接失败: {e}')
+            self.status_text = t('status_connect_fail', e)
 
     def _delayed_init(self, dt):
         try:
@@ -564,9 +572,13 @@ class FileShareApp(App):
             self.device_box.add_widget(btn)
 
     def _connect_to_device(self, device):
-        self.current_device = device
-        self.status_text = t('status_connected', device.get('name', '?'))
-        self._refresh_files()
+        try:
+            self.current_device = device
+            self.status_text = t('status_connected', device.get('name', '?'))
+            self._refresh_files()
+        except Exception as e:
+            Logger.error(f'FileShare: 连接设备失败: {e}')
+            self.status_text = t('status_connect_fail', e)
 
     def _refresh_files(self):
         if not self.current_device:
