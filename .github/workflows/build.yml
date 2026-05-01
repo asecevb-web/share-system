@@ -28,9 +28,8 @@ jobs:
 
       - name: Download Chinese font
         run: |
-          mkdir -p fonts
-          curl -sL --max-time 60 "https://github.com/googlefonts/noto-cjk/raw/main/Sans/OTF/SimplifiedChinese/NotoSansSC-Regular.otf" -o fonts/NotoSansSC-Regular.otf
-          ls -lh fonts/
+          curl -sL --max-time 120 "https://github.com/googlefonts/noto-cjk/raw/main/Sans/OTF/SimplifiedChinese/NotoSansSC-Regular.otf" -o NotoSansSC-Regular.otf
+          ls -lh NotoSansSC-Regular.otf
 
       - name: Build APK
         run: |
