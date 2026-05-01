@@ -1,10 +1,10 @@
 [app]
-title = 文件共享
+title = FileShare
 package.name = fileshare
 package.domain = org.fileshare
 source.dir = .
-source.include_exts = py,otf,ttf
-version = 0.4
+source.include_exts = py
+version = 0.5
 requirements = python3,kivy,requests
 orientation = portrait
 fullscreen = 0
