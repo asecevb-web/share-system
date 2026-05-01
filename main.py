@@ -170,11 +170,13 @@ def make_button(text='', font_size=16, **kwargs):
 
 
 def make_textinput(hint_text='', multiline=False, **kwargs):
-    """创建 TextInput（Android 兼容）"""
+    """创建 TextInput（Android 兼容，禁用可能导致闪退的手柄）"""
     kw = {
         'hint_text': hint_text,
         'multiline': multiline,
         'write_tab': False,
+        'use_bubble': False,   # 禁用粘贴气泡
+        'use_handles': False,  # 禁用选择手柄（Android上点击会闪退）
     }
     if FONT_NAME:
         kw['font_name'] = FONT_NAME
