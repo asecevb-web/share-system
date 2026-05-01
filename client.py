@@ -8,6 +8,7 @@ import os
 import sys
 import json
 import socket
+import struct
 import threading
 import time
 import tkinter as tk
@@ -78,15 +79,36 @@ class FileShareClient:
         self.on_status_change = None
 
     def _get_local_ip(self):
+        """获取局域网IP（优先WiFi/以太网，排除VPN/隧道）"""
+        # 方法1: 查找 wlan/eth 开头的接口
+        try:
+            import subprocess
+            result = subprocess.run(
+                ['ip', '-4', 'addr', 'show'],
+                capture_output=True, text=True, timeout=5
+            )
+            current_iface = None
+            for line in result.stdout.split('\n'):
+                if line and not line.startswith(' '):
+                    current_iface = line.split()[1].rstrip(':')
+                elif 'inet ' in line and current_iface:
+                    # 优先 wlan/eth/rmnet (排除 lo/tun/wg/ppp)
+                    if any(current_iface.startswith(p) for p in ('wlan', 'eth', 'rmnet', 'en')):
+                        ip = line.strip().split()[1].split('/')[0]
+                        return ip
+        except Exception:
+            pass
+
+        # 方法2: 通过 socket 连接（可能选到VPN）
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.settimeout(2)
-            s.connect(("8.8.8.8", 80))
+            s.connect(('8.8.8.8', 80))
             ip = s.getsockname()[0]
             s.close()
             return ip
         except:
-            return "127.0.0.1"
+            return '127.0.0.1'
 
     def start_udp(self):
         """启动 UDP 广播服务"""
@@ -137,6 +159,33 @@ class FileShareClient:
             if sock:
                 sock.close()
 
+    def _get_broadcast_addr(self):
+        """获取局域网广播地址"""
+        try:
+            import subprocess
+            result = subprocess.run(
+                ['ip', '-4', 'addr', 'show'],
+                capture_output=True, text=True, timeout=5
+            )
+            current_iface = None
+            for line in result.stdout.split('\n'):
+                if line and not line.startswith(' '):
+                    current_iface = line.split()[1].rstrip(':')
+                elif 'inet ' in line and current_iface:
+                    if any(current_iface.startswith(p) for p in ('wlan', 'eth', 'rmnet', 'en')):
+                        parts = line.strip().split()
+                        addr = parts[1]  # e.g. 192.168.1.14/24
+                        ip = addr.split('/')[0]
+                        prefix = int(addr.split('/')[1]) if '/' in addr else 24
+                        # 计算广播地址
+                        ip_int = struct.unpack('!I', socket.inet_aton(ip))[0]
+                        mask = (0xffffffff << (32 - prefix)) & 0xffffffff
+                        bcast_int = ip_int | (~mask & 0xffffffff)
+                        return socket.inet_ntoa(struct.pack('!I', bcast_int))
+        except Exception:
+            pass
+        return '<broadcast>'
+
     def _broadcast(self):
         msg = json.dumps({
             "version": PROTOCOL_VERSION,
@@ -150,13 +199,14 @@ class FileShareClient:
             },
             "timestamp": datetime.now().isoformat()
         }).encode('utf-8')
+        bcast_addr = self._get_broadcast_addr()
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-            s.sendto(msg, ('<broadcast>', UDP_BROADCAST_PORT))
+            s.sendto(msg, (bcast_addr, UDP_BROADCAST_PORT))
             s.close()
-        except:
-            pass
+        except Exception as e:
+            print(f'广播失败: {e}')
 
     def _handle_udp(self, data):
         try:
