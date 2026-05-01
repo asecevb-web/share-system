@@ -230,5 +230,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: fileshare-apk-original
-          path: bin/*.apk
+          path: bin/fileshare*.apk
           if-no-files-found: warn
