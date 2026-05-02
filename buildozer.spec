@@ -13,6 +13,10 @@ android.api = 28
 android.minapi = 21
 android.accept_sdk_license = True
 android.archs = arm64-v8a
+android.keystore = keystore/fileshare.keystore
+android.keystore_pass = android
+android.key_alias = fileshare
+android.key_pass = android
 
 [buildozer]
 log_level = 2

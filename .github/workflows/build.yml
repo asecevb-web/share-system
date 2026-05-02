@@ -1,234 +1,62 @@
-name: Build Android APK
+name: Build APK
 
 on:
   push:
-    branches: [main, master]
+    branches: [main]
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
       - name: Install dependencies
         run: |
+          pip install buildozer cython
+
+      - name: Install system dependencies
+        run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential git zip unzip \
-            openjdk-17-jdk autoconf libtool pkg-config \
-            zlib1g-dev libncurses5-dev cmake libffi-dev libssl-dev
-          pip install --upgrade pip
-          pip install buildozer cython==0.29.36 pyelftools
+            build-essential \
+            git \
+            ffmpeg \
+            libsdl2-dev \
+            libsdl2-image-dev \
+            libsdl2-mixer-dev \
+            libsdl2-ttf-dev \
+            libportmidi-dev \
+            libswscale-dev \
+            libavcodec-dev \
+            libavformat-dev \
+            libusb-dev \
+            libudev-dev \
+            pkg-config \
+            zip \
+            unzip \
+            openjdk-17-jdk
+
+      - name: Decode keystore
+        run: |
+          echo "${{ env.KEYSTORE_BASE64 }}" | base64 -d > keystore/fileshare.keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
 
       - name: Build APK
         run: |
-          rm -rf .buildozer ~/.buildozer
+          cd share-system
           buildozer android debug
-        timeout-minutes: 120
         env:
-          JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+          BUILDOZER_WARN_ON_ROOT: 0
 
-      - name: Fix 16KB ELF alignment and re-sign
-        if: always()
-        run: |
-          python3 << 'PYEOF'
-          import os, zipfile, shutil, subprocess
-          from elftools.elf.elffile import ELFFile
-
-          def fix_elf_alignment(so_path):
-              try:
-                  with open(so_path, 'rb') as f:
-                      elf = ELFFile(f)
-                      needs_fix = any(
-                          seg['p_type'] == 'PT_LOAD' and seg['p_align'] < 16384
-                          for seg in elf.iter_segments()
-                      )
-                  if not needs_fix:
-                      return False
-              except Exception as e:
-                  print(f"  ⚠️  Skip: {os.path.basename(so_path)}: {e}")
-                  return None
-
-              with open(so_path, 'rb') as f:
-                  data = bytearray(f.read())
-
-              e_phoff = int.from_bytes(data[32:40], 'little')
-              e_phentsize = int.from_bytes(data[54:56], 'little')
-              e_phnum = int.from_bytes(data[56:58], 'little')
-
-              fixed = False
-              for i in range(e_phnum):
-                  offset = e_phoff + i * e_phentsize
-                  p_type = int.from_bytes(data[offset:offset+4], 'little')
-                  if p_type == 1:
-                      p_align_off = offset + 48
-                      p_align = int.from_bytes(data[p_align_off:p_align_off+8], 'little')
-                      if p_align < 16384:
-                          data[p_align_off:p_align_off+8] = (16384).to_bytes(8, 'little')
-                          fixed = True
-
-              if fixed:
-                  with open(so_path, 'wb') as f:
-                      f.write(data)
-              return fixed
-
-          # Find APK
-          apk_path = None
-          for f in os.listdir("bin"):
-              if f.endswith(".apk"):
-                  apk_path = os.path.join("bin", f)
-                  break
-
-          if not apk_path:
-              print("❌ No APK found")
-              exit(0)
-
-          print(f"Found APK: {apk_path}")
-          work_dir = "apk_fix"
-          shutil.rmtree(work_dir, ignore_errors=True)
-          os.makedirs(work_dir)
-
-          with zipfile.ZipFile(apk_path, 'r') as z:
-              z.extractall(work_dir)
-
-          # Remove original signature
-          sig_dir = os.path.join(work_dir, "META-INF")
-          if os.path.exists(sig_dir):
-              for f in os.listdir(sig_dir):
-                  if f.upper().endswith(('.SF', '.RSA', '.DSA', '.EC')):
-                      os.remove(os.path.join(sig_dir, f))
-              print("  Removed old signatures")
-
-          # Fix 16KB alignment
-          lib_dir = os.path.join(work_dir, "lib", "arm64-v8a")
-          fixed_count = 0
-          if os.path.exists(lib_dir):
-              for so_file in sorted(os.listdir(lib_dir)):
-                  if so_file.endswith(".so"):
-                      so_path = os.path.join(lib_dir, so_file)
-                      result = fix_elf_alignment(so_path)
-                      if result is True:
-                          print(f"  ✅ Fixed: {so_file}")
-                          fixed_count += 1
-                      elif result is False:
-                          print(f"  ⏭️  Already aligned: {so_file}")
-
-          # Create unsigned APK (store resources.arsc uncompressed & aligned)
-          unsigned_apk = apk_path.replace(".apk", "-unsigned.apk")
-          with zipfile.ZipFile(unsigned_apk, 'w', zipfile.ZIP_DEFLATED) as z:
-              for root, dirs, files in os.walk(work_dir):
-                  for f in files:
-                      filepath = os.path.join(root, f)
-                      arcname = os.path.relpath(filepath, work_dir)
-                      # Store resources.arsc uncompressed for API 28+ compatibility
-                      if f.lower() == 'resources.arsc':
-                          z.write(filepath, arcname, compress_type=zipfile.ZIP_STORED)
-                      else:
-                          z.write(filepath, arcname)
-
-          print(f"  Created unsigned APK: {unsigned_apk}")
-
-          # Find debug keystore
-          keystore_path = os.path.expanduser("~/.android/debug.keystore")
-          if not os.path.exists(keystore_path):
-              # Generate debug keystore
-              os.makedirs(os.path.dirname(keystore_path), exist_ok=True)
-              subprocess.run([
-                  "keytool", "-genkey", "-v",
-                  "-keystore", keystore_path,
-                  "-storepass", "android",
-                  "-alias", "androiddebugkey",
-                  "-keypass", "android",
-                  "-keyalg", "RSA",
-                  "-keysize", "2048",
-                  "-validity", "10000",
-                  "-dname", "CN=Android Debug,O=Android,C=US"
-              ], check=True)
-              print("  Generated debug keystore")
-
-          # Find build-tools for apksigner
-          android_home = os.environ.get("ANDROID_HOME", os.path.expanduser("~/.android"))
-          build_tools_dir = None
-          for root, dirs, files in os.walk(os.path.expanduser("~/.buildozer")):
-              if "apksigner" in files:
-                  build_tools_dir = os.path.dirname(os.path.join(root, "apksigner"))
-                  break
-
-          # Try zipalign first (from buildozer's Android SDK)
-          zipalign_path = None
-          for root, dirs, files in os.walk(os.path.expanduser("~/.buildozer")):
-              if "zipalign" in files:
-                  zipalign_path = os.path.join(root, "zipalign")
-                  break
-
-          aligned_apk = apk_path.replace(".apk", "-aligned.apk")
-          if zipalign_path:
-              subprocess.run([zipalign_path, "-f", "4", unsigned_apk, aligned_apk], check=True)
-              print(f"  zipaligned: {aligned_apk}")
-          else:
-              shutil.copy2(unsigned_apk, aligned_apk)
-              print("  ⚠️  zipalign not found, skipping")
-
-          # Sign with apksigner (v2 scheme)
-          apksigner_path = None
-          for root, dirs, files in os.walk(os.path.expanduser("~/.buildozer")):
-              if "apksigner" in files:
-                  apksigner_path = os.path.join(root, "apksigner")
-                  break
-
-          if apksigner_path:
-              signed_apk = apk_path.replace(".apk", "-16k.apk")
-              subprocess.run([
-                  apksigner_path, "sign",
-                  "--ks", keystore_path,
-                  "--ks-pass", "pass:android",
-                  "--ks-key-alias", "androiddebugkey",
-                  "--key-pass", "pass:android",
-                  "--out", signed_apk,
-                  aligned_apk
-              ], check=True)
-              print(f"  ✅ Signed with apksigner: {signed_apk}")
-
-              # Verify signature
-              result = subprocess.run([apksigner_path, "verify", "-v", signed_apk],
-                                       capture_output=True, text=True)
-              print(f"  Signature verification:\n{result.stdout[:500]}")
-          else:
-              # Fallback: sign with jarsigner (v1)
-              signed_apk = apk_path.replace(".apk", "-16k.apk")
-              shutil.copy2(aligned_apk, signed_apk)
-              subprocess.run([
-                  "jarsigner",
-                  "-keystore", keystore_path,
-                  "-storepass", "android",
-                  "-keypass", "android",
-                  "-signedjar", signed_apk,
-                  aligned_apk,
-                  "androiddebugkey"
-              ], check=True)
-              print(f"  ✅ Signed with jarsigner (v1): {signed_apk}")
-
-          print(f"\n✅ Final APK: {signed_apk} ({fixed_count} libs patched)")
-          PYEOF
-
-      - name: Upload signed APK
-        if: always()
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: fileshare-apk-16kb
-          path: bin/*-16k.apk
-          if-no-files-found: warn
-
-      - name: Upload original APK
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: fileshare-apk-original
-          path: bin/fileshare*.apk
-          if-no-files-found: warn
+          name: fileshare-apk
+          path: share-system/bin/*.apk

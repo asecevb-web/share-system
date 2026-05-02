@@ -31,3 +31,6 @@ downloads/
 
 # Shared files (server-side)
 shared_files/
+keystore/
+.buildozer/
+bin/
