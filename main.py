@@ -1,6 +1,6 @@
 """
 文件共享 Android 客户端 (Kivy)
-v0.6 - 稳定版，不依赖外部字体
+v0.7 - 修复中文字体支持
 """
 
 import os
@@ -31,14 +31,46 @@ from kivy.properties import ListProperty, ObjectProperty, StringProperty
 from kivy.clock import Clock
 from kivy.utils import platform
 from kivy.logger import Logger
+from kivy.core.text import LabelBase
 
 UDP_BROADCAST_PORT = 5555
 HTTP_PORT = 8080
 
 # ========== 字体 ==========
-# 不注册自定义字体，用 Kivy 默认的 Roboto
-# Roboto 支持基本中文，如果显示黑框是 Android 版本问题
-FONT = 'Roboto'
+def _init_font():
+    """加载中文字体，多级 fallback"""
+    # 1. 优先用打包的 TTF 字体（与 main.py 同目录）
+    bundled = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'NotoSansSC-Regular.ttf')
+    if os.path.exists(bundled):
+        try:
+            LabelBase.register(name='CJK', fn_regular=bundled)
+            Logger.info(f'FS: 字体加载成功: {bundled}')
+            return 'CJK'
+        except Exception as e:
+            Logger.warning(f'FS: 打包字体加载失败: {e}')
+
+    # 2. Android 系统字体
+    if platform == 'android':
+        sys_fonts = [
+            '/system/fonts/NotoSansSC-Regular.otf',
+            '/system/fonts/NotoSansCJK-Regular.ttc',
+            '/system/fonts/DroidSansFallback.ttf',
+            '/system/fonts/NotoSansHans-Regular.otf',
+        ]
+        for fp in sys_fonts:
+            if os.path.exists(fp):
+                try:
+                    LabelBase.register(name='SysCJK', fn_regular=fp)
+                    Logger.info(f'FS: 系统字体: {fp}')
+                    return 'SysCJK'
+                except Exception as e:
+                    Logger.warning(f'FS: 系统字体失败 {fp}: {e}')
+
+    # 3. 兜底用 Roboto
+    Logger.warning('FS: 无中文字体可用，用 Roboto')
+    return 'Roboto'
+
+FONT = _init_font()
 
 # ========== 国际化 ==========
 LANG = {
@@ -111,14 +143,17 @@ def t(k, *a):
 
 def mk_lbl(text='', size=18, **kw):
     kw.setdefault('font_size', size)
+    kw.setdefault('font_name', FONT)
     return Label(text=text, **kw)
 
 def mk_btn(text='', size=18, **kw):
     kw.setdefault('font_size', size)
+    kw.setdefault('font_name', FONT)
     return Button(text=text, **kw)
 
 def mk_input(hint='', **kw):
     kw.setdefault('font_size', 18)
+    kw.setdefault('font_name', FONT)
     kw.setdefault('multiline', False)
     kw.setdefault('write_tab', False)
     kw.setdefault('use_bubble', False)
