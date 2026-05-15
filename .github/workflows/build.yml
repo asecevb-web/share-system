@@ -50,7 +50,6 @@ jobs:
 
       - name: Build APK
         run: |
-          cd share-system
           buildozer android debug
         env:
           BUILDOZER_WARN_ON_ROOT: 0
@@ -59,4 +58,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: fileshare-apk
-          path: share-system/bin/*.apk
+          path: bin/*.apk
