@@ -44,6 +44,7 @@ jobs:
 
       - name: Decode keystore
         run: |
+          mkdir -p keystore
           echo "${{ env.KEYSTORE_BASE64 }}" | base64 -d > keystore/fileshare.keystore
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
