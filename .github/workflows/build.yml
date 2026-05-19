@@ -58,6 +58,9 @@ jobs:
 
       - name: Build APK
         run: |
+          export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+          export PATH=$JAVA_HOME/bin:$PATH
+          java -version
           buildozer android debug
         env:
           BUILDOZER_WARN_ON_ROOT: 0
