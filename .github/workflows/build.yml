@@ -18,7 +18,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install buildozer cython
+          pip install buildozer==1.5.0 cython==3.0.10
 
       - name: Install system dependencies
         run: |
@@ -52,6 +52,9 @@ jobs:
           echo "${{ env.KEYSTORE_BASE64 }}" | base64 -d > keystore/fileshare.keystore
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+
+      - name: Patch p4a for 16KB alignment
+        run: python patch_p4a_16kb.py
 
       - name: Build APK
         run: |

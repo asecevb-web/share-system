@@ -17,6 +17,7 @@ android.keystore = keystore/fileshare.keystore
 android.keystore_pass = android
 android.key_alias = fileshare
 android.key_pass = android
+android.ndk = 25b
 
 [buildozer]
 log_level = 2
