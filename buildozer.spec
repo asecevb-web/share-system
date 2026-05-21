@@ -5,7 +5,7 @@ package.domain = org.fileshare
 source.dir = .
 source.include_exts = py,ttf
 version = 0.7
-requirements = python3==3.12.10,kivy==2.3.1,pyjnius,requests
+requirements = python3,kivy==2.3.1,pyjnius,requests
 orientation = portrait
 fullscreen = 0
 android.permissions = INTERNET,ACCESS_NETWORK_STATE
