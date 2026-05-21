@@ -14,11 +14,11 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
 
       - name: Install dependencies
         run: |
-          pip install buildozer==1.5.0 cython==3.0.10
+          pip install buildozer==1.5.2 cython==3.0.11
 
       - name: Install system dependencies
         run: |

@@ -5,11 +5,11 @@ package.domain = org.fileshare
 source.dir = .
 source.include_exts = py,ttf
 version = 0.7
-requirements = python3,kivy,requests
+requirements = python3==3.12.10,kivy==2.3.1,pyjnius,requests
 orientation = portrait
 fullscreen = 0
 android.permissions = INTERNET,ACCESS_NETWORK_STATE
-android.api = 31
+android.api = 33
 android.minapi = 21
 android.accept_sdk_license = True
 android.archs = arm64-v8a
