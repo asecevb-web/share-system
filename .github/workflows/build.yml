@@ -18,7 +18,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install buildozer==1.6.0 cython==3.0.11
+          pip install buildozer==1.6.0
 
       - name: Install system dependencies
         run: |
